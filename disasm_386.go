@@ -1,0 +1,23 @@
+package hookingo
+
+import (
+	"golang.org/x/arch/x86/x86asm"
+)
+
+func analysis(src []byte) (inf info, err error) {
+	inst, err := x86asm.Decode(src, 32)
+	if err != nil {
+		return
+	}
+	inf.length = inst.Len
+	inf.relocatable = true
+	for _, a := range inst.Args {
+		if mem, ok := a.(x86asm.Mem); ok {
+			if mem.Base == x86asm.EIP {
+				inf.relocatable = false
+				return
+			}
+		}
+	}
+	return
+}
