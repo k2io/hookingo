@@ -1,4 +1,4 @@
-module github.com/fengyoulin/hookingo
+module github.com/k2io/hookingo
 
 go 1.12
 
