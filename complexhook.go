@@ -7,6 +7,14 @@ import (
 )
 func init () {
 }
+func ApplyWrapRaw(from uintptr, to,toc interface{}) (*hook,error) {
+
+  
+        vt := reflect.ValueOf(to)
+        vc := reflect.ValueOf(toc) // this is typically same as vt
+   
+        return applyWrap(from, vt.Pointer(), vc.Pointer(),nil)
+}
 
 func ApplyWrapInterface(from,to,toc interface {}) (*hook,error) {
 
