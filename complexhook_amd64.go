@@ -43,6 +43,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	hk := &hook{}
 	if !inf.relocatable {
 		hk.origin = ErrRelativeAddr
+		reProtectPages(from,pageSize)
                 return hk,nil
 	}
         // code to return to origMethod
@@ -68,6 +69,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
         }
 	err = protectPages(toc, uintptr(inf.length+len(jmpOrig)))
 	if err != nil {
+		reProtectPages(from,pageSize)
 		return nil, err
 	}
 
