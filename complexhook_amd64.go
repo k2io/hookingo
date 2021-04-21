@@ -38,7 +38,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	}
 	src := makeSlice(from, 32)
 
-	inf, err := ensureLength(src, 15)
+	inf, err := ensureLength(src, 14)
 	if err != nil {
 		return nil, err
 	}
