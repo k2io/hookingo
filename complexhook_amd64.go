@@ -40,15 +40,24 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 
 	inf, err := ensureLength(src, 14)
 	if err != nil {
+		if hdebug {
+			 println("early-exit: ensureLength  - err")
+		}
 		return nil, err
 	}
 	err = protectPages(from, uintptr(inf.length))
 	if err != nil {
+		if hdebug {
+			 println("early-exit: CannotProtectPage - orig")
+		}
 		return nil, err
 	}
 	hk := &hook{}
 	if !inf.relocatable {
 		hk.origin = ErrRelativeAddr
+		if hdebug {
+			 println("early-exit: NotRelocatable")
+		}
 		reProtectPages(from,pageSize)
                 return hk,nil
 	}
@@ -76,6 +85,9 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	err = protectPages(toc, uintptr(inf.length+len(jmpOrig)))
 	if err != nil {
 		reProtectPages(from,pageSize)
+		if hdebug {
+			 println("early-exit: ProtectPage  tgt failed.")
+		}
 		return nil, err
 	}
 
@@ -89,10 +101,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
           println("Before-method_s:",hk.target)
           for i:= range hk.jumper { if i> 32 {break;};println(hk.target[i]);}
         }
-	if hdebug {
-		println("Before: from :",hk.jumper)
-		println("Before: toc :",hk.target)
-	}
+	
         //1. origFn first bytes copied to toc
 	copy(dst, src)
         //2. origFn overwritten to jmp to to
