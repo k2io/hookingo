@@ -2,20 +2,24 @@
 // (C) 2020,2021 K2 Cyber Security Inc. 
 package hookingo
 //import ( "unsafe" )
-
+var hdebug=true
 func locateStackCheck( from uintptr ) ( uintptr ) {
         n:=64
 	x := makeSlice(from, 64)
         // do do --- disassemble until first JBE or jump encountered
         for i,b := range x {
-           println("%d  %x",i,b)
+		if hdebug {
+			println("DEBUG:addr:",from+uintptr(i)," ",i," ",x[i])
+		}
            if b == 0x76 {
               return uintptr(i+2)
            }
            if b == 0x0f {
               if i < (n-6) {
                   if x[i+1] == 0x86 {
-                     println("%d  %x",i+1,x[i+1])
+			  if hdebug {
+				  println("DEBUG:addr:",from+uintptr(i)," ",i+1," ",x[i+1])
+			  }
                      return uintptr(i+6)
                   }
               }
@@ -29,7 +33,9 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
         n := locateStackCheck(fromv)
         from:= fromv+n
         //locate first jbe --> 0x76 dd or 0x0f 0x86 dd dd dd dd
-        println("relocating wrap by ..",n)
+	if hdebug {
+		println("relocating wrap by ..",n)
+	}
 	src := makeSlice(from, 32)
 
 	inf, err := ensureLength(src, 15)
@@ -77,6 +83,16 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	src = makeSlice(from, uintptr(inf.length))
 	hk.jumper = dst
 	hk.target = src
+	if hdebug {
+          println("Before-from:",hk.jumper)
+          for i:= range hk.jumper { if i> 32 {break;};println(hk.jumper[i]);}
+          println("Before-method_s:",hk.target)
+          for i:= range hk.jumper { if i> 32 {break;};println(hk.target[i]);}
+        }
+	if hdebug {
+		println("Before: from :",hk.jumper)
+		println("Before: toc :",hk.target)
+	}
         //1. origFn first bytes copied to toc
 	copy(dst, src)
         //2. origFn overwritten to jmp to to
@@ -94,6 +110,13 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 
         reProtectPages(toc,pageSize)
         reProtectPages(from,pageSize)
+	
+	if hdebug {
+          println("Before-from:",hk.jumper)
+          for i:= range hk.jumper { if i> 32 {break;};println(hk.jumper[i]);}
+          println("Before-method_s:",hk.target)
+          for i:= range hk.jumper { if i> 32 {break;};println(hk.target[i]);}
+        }
 	return hk, nil
 }
 
