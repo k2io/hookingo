@@ -2,7 +2,11 @@
 // (C) 2020,2021 K2 Cyber Security Inc. 
 package hookingo
 //import ( "unsafe" )
-var hdebug=true
+var hdebug=false
+func SetDebug(x bool) {
+	hdebug=x	
+}
+
 func locateStackCheck( from uintptr ) ( uintptr ) {
         n:=64
 	x := makeSlice(from, 64)
