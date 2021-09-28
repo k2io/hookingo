@@ -4,7 +4,7 @@ package hookingo
 //import ( "unsafe" )
 var hdebug=false
 func SetDebug(x bool) {
-	hdebug=x	
+	hdebug=x
 }
 
 func locateStackCheck( from uintptr ) ( uintptr ) {
@@ -42,7 +42,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	}
 	src := makeSlice(from, 32)
 
-	inf, err := ensureLength(src, 14)
+	inf, err := ensureLength(src, 17+5) // PUSH POP was 13+1
 	if err != nil {
 		if hdebug {
 			 println("early-exit: ensureLength  - err")
@@ -69,7 +69,8 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
         // this is inserted in cannibalized code.
 	addr := from + uintptr(inf.length-1) //addr of POP
         jmpOrig:= []byte {
-                0x50,                               //PUSH RAX
+                //0x50,                               //PUSH RAX
+                0x48,0x87,0x44,0x24,0x08,           // XCHG rax,8[rsp]
 		0x48, 0xb8,                         // MOV RAX, addr
 		byte(addr), byte(addr >> 8),        // .
 		byte(addr >> 16), byte(addr >> 24), // .
@@ -77,7 +78,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 		byte(addr >> 48), byte(addr >> 56), // .
 		0xff, 0xe0,                         // JMP RAX
         }
-        addr = to 
+        addr = to
         jmpToTo:= []byte {
                 0x48, 0xb8,                         // MOV RAX, addr
                 byte(addr), byte(addr >> 8),        // .
@@ -105,17 +106,18 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
           println("Before-method_s:",hk.target)
           for i:= range hk.jumper { if i> 32 {break;};println(hk.target[i]);}
         }
-	
+
         //1. origFn first bytes copied to toc
 	copy(dst, src)
         //2. origFn overwritten to jmp to to
 	dst = makeSlice(from,uintptr(inf.length))
         copy(dst,jmpToTo)
         //3. insert POP at end of orig code.
-	dst = makeSlice(from+uintptr(inf.length-1),uintptr(1))
         instAtTgt:= []byte {
-                0x58,      //POP RAX
+                // 0x58,      //POP RAX
+                0x48,0x87,0x44,0x24,0x08,           // XCHG rax,8[rsp]
         }
+	dst = makeSlice(from+uintptr(inf.length-1),uintptr(len(instAtTgt))
 	copy(dst, instAtTgt)
         //4. toc overwritten to return to POP
 	dst = makeSlice(toc+uintptr(inf.length),uintptr(len(jmpOrig)))
