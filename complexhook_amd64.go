@@ -117,7 +117,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
                 // 0x58,      //POP RAX
                 0x48,0x87,0x44,0x24,0x08,           // XCHG rax,8[rsp]
         }
-	dst = makeSlice(from+uintptr(inf.length-1),uintptr(len(instAtTgt))
+	dst = makeSlice(from+uintptr(inf.length-1),uintptr(len(instAtTgt)))
 	copy(dst, instAtTgt)
         //4. toc overwritten to return to POP
 	dst = makeSlice(toc+uintptr(inf.length),uintptr(len(jmpOrig)))
@@ -125,7 +125,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 
         reProtectPages(toc,pageSize)
         reProtectPages(from,pageSize)
-	
+
 	if hdebug {
           println("Before-from:",hk.jumper)
           for i:= range hk.jumper { if i> 32 {break;};println(hk.jumper[i]);}
