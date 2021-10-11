@@ -67,7 +67,8 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	}
         // code to return to origMethod
         // this is inserted in cannibalized code.
-	addr := from + uintptr(inf.length-1) //addr of POP
+        retseqLen:=5 //XCHG
+	addr := from + uintptr(inf.length-retseqLen) //addr of POP
         jmpOrig:= []byte {
                 //0x50,                               //PUSH RAX
                 0x48,0x87,0x44,0x24,0x08,           // XCHG rax,8[rsp]
@@ -117,7 +118,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
                 // 0x58,      //POP RAX
                 0x48,0x87,0x44,0x24,0x08,           // XCHG rax,8[rsp]
         }
-	dst = makeSlice(from+uintptr(inf.length-1),uintptr(len(instAtTgt))
+	dst = makeSlice(from+uintptr(inf.length-len(instAtTgt)),uintptr(len(instAtTgt)))
 	copy(dst, instAtTgt)
         //4. toc overwritten to return to POP
 	dst = makeSlice(toc+uintptr(inf.length),uintptr(len(jmpOrig)))
@@ -125,7 +126,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 
         reProtectPages(toc,pageSize)
         reProtectPages(from,pageSize)
-	
+
 	if hdebug {
           println("Before-from:",hk.jumper)
           for i:= range hk.jumper { if i> 32 {break;};println(hk.jumper[i]);}
@@ -163,4 +164,3 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 //         JMP RAX -- this code returns unwinds stack
 //         TODO: need to restore return values from part1
 // ---
-
