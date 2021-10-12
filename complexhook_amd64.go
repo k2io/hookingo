@@ -2,6 +2,9 @@
 // (C) 2020,2021 K2 Cyber Security Inc. 
 package hookingo
 //import ( "unsafe" )
+import (
+        "golang.org/x/arch/x86/x86asm"
+)
 var hdebug=false
 func SetDebug(x bool) {
 	hdebug=x
@@ -11,6 +14,7 @@ func locateStackCheck( from uintptr ) ( uintptr ) {
         n:=64
 	x := makeSlice(from, 64)
         // do do --- disassemble until first JBE or jump encountered
+
         for i,b := range x {
 		if hdebug {
 			println("DEBUG:addr:",from+uintptr(i)," ",i," ",x[i])
@@ -42,13 +46,20 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	}
 	src := makeSlice(from, 32)
 
-	inf, err := ensureLength(src, 17+5) // PUSH POP was 13+1
+	inf, err := ensureLength(src, 14+1) // PUSH POP was 13+1
 	if err != nil {
 		if hdebug {
 			 println("early-exit: ensureLength  - err")
 		}
 		return nil, err
 	}
+        A,B := checkLive(fromv,inf.length)
+        if !A && !B {
+	    if hdebug {
+	        println("no scratch reg found.")
+	    }
+           return nil,nil
+        }
 	err = protectPages(from, uintptr(inf.length))
 	if err != nil {
 		if hdebug {
@@ -67,11 +78,9 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	}
         // code to return to origMethod
         // this is inserted in cannibalized code.
-        retseqLen:=5 //XCHG
+        retseqLen:=1 //NOP
 	addr := from + uintptr(inf.length-retseqLen) //addr of POP
-        jmpOrig:= []byte {
-                //0x50,                               //PUSH RAX
-                0x48,0x87,0x44,0x24,0x08,           // XCHG rax,8[rsp]
+        raxseq:= []byte {
 		0x48, 0xb8,                         // MOV RAX, addr
 		byte(addr), byte(addr >> 8),        // .
 		byte(addr >> 16), byte(addr >> 24), // .
@@ -79,14 +88,38 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 		byte(addr >> 48), byte(addr >> 56), // .
 		0xff, 0xe0,                         // JMP RAX
         }
+        r11seq:= []byte {
+                0x49, 0xc7,0xc3,                         // MOV r11, addr
+                byte(addr), byte(addr >> 8),        // .
+                byte(addr >> 16), byte(addr >> 24), // .
+                byte(addr >> 32), byte(addr >> 40), // .
+                byte(addr >> 48), byte(addr >> 56), // .
+                0x41,0xff, 0xe3,                         // JMP R11
+        }
+        jmpOrig:= r11seq
+        if B == false  {
+           jmpOrig = raxseq
+        }
         addr = to
-        jmpToTo:= []byte {
+        jaxJmpTo:= []byte {
                 0x48, 0xb8,                         // MOV RAX, addr
                 byte(addr), byte(addr >> 8),        // .
                 byte(addr >> 16), byte(addr >> 24), // .
                 byte(addr >> 32), byte(addr >> 40), // .
                 byte(addr >> 48), byte(addr >> 56), // .
                 0xff, 0xe0,                         // JMP RAX
+        }
+        r11JmpTo:= []byte {
+                0x49, 0xc7,0xc3,                         // MOV r11, addr
+                byte(addr), byte(addr >> 8),        // .
+                byte(addr >> 16), byte(addr >> 24), // .
+                byte(addr >> 32), byte(addr >> 40), // .
+                byte(addr >> 48), byte(addr >> 56), // .
+                0x41,0xff, 0xe3,                         // JMP R11
+        }
+        jmpToTo:= r11jmpTo
+        if B == false {
+           jmpToTo=raxJmpTo
         }
 	err = protectPages(toc, uintptr(inf.length+len(jmpOrig)))
 	if err != nil {
@@ -115,8 +148,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
         copy(dst,jmpToTo)
         //3. insert POP at end of orig code.
         instAtTgt:= []byte {
-                // 0x58,      //POP RAX
-                0x48,0x87,0x44,0x24,0x08,           // XCHG rax,8[rsp]
+                0x90, //nop
         }
 	dst = makeSlice(from+uintptr(inf.length-len(instAtTgt)),uintptr(len(instAtTgt)))
 	copy(dst, instAtTgt)
@@ -136,6 +168,60 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	return hk, nil
 }
 
+func checkLive( from uintptr,lenf int) (bool,bool) {
+      okA:=true
+      okB:=true
+      src := makeSlice(from,uintptr(lenf))
+      lenx:=lenf
+      if hdebug {
+          println(" start  ----------------------------------------------- ")
+      }
+      for x:=0;x< lenf; x=x+lenx{
+        i, err := x86asm.Decode(src[x:], 64)
+        if err != nil {
+           return false,false
+        }
+        if  strings.HasPrefix(i.Opcode.String(),"CMP") { 
+            continue
+        }
+        if i.Args[0] != nil  {
+          s:=i.Args[0].String()
+          if    ("RAX" == s ) || ("EAX" == s ) || ( "AX" == s ) || ( "AH" == s ) || ( "AL" == s ) {
+             okA=false
+          }
+          if    ("R11" == s ) {
+             okB=false
+          }
+        }
+        if  strings.HasPrefix(i.Opcode.String(),"XCHG") { 
+          if i.Args[1] != nil  {
+          s:=i.Args[1].String()
+          if    ("RAX" == s ) || ("EAX" == s ) || ( "AX" == s ) || ( "AH" == s ) || ( "AL" == s ) {
+             okA=false
+          }
+          if    ("R11" == s ) {
+             okB=false
+          }
+          }
+        }
+        lenx=i.Len
+        if hdebug {
+          println(" found ... ",i.String(),"len:",i.Len)
+        }
+
+        for _,a := range(i.Args) {
+            if a==nil { break }
+            if hdebug {
+               println(" args: ... ",a.String())
+            }
+        }
+        if hdebug {
+           println(" regAX available: ",okA)
+           println(" regR11 available: ",okB)
+        }
+      }
+      return okA,okB
+}
 // ---
 // current scheme 
 //     jmper saved as before
