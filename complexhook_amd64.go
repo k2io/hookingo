@@ -4,6 +4,7 @@ package hookingo
 //import ( "unsafe" )
 import (
         "golang.org/x/arch/x86/x86asm"
+        "strings"
 )
 var hdebug=false
 func SetDebug(x bool) {
@@ -46,7 +47,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	}
 	src := makeSlice(from, 32)
 
-	inf, err := ensureLength(src, 14+1) // PUSH POP was 13+1
+	inf, err := ensureLength(src, 13+1) // PUSH POP was 13+1
 	if err != nil {
 		if hdebug {
 			 println("early-exit: ensureLength  - err")
@@ -89,7 +90,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 		0xff, 0xe0,                         // JMP RAX
         }
         r11seq:= []byte {
-                0x49, 0xc7,0xc3,                         // MOV r11, addr
+                0x49, 0xbb,                          // MOV R11, addr64
                 byte(addr), byte(addr >> 8),        // .
                 byte(addr >> 16), byte(addr >> 24), // .
                 byte(addr >> 32), byte(addr >> 40), // .
@@ -101,7 +102,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
            jmpOrig = raxseq
         }
         addr = to
-        jaxJmpTo:= []byte {
+        raxJmpTo:= []byte {
                 0x48, 0xb8,                         // MOV RAX, addr
                 byte(addr), byte(addr >> 8),        // .
                 byte(addr >> 16), byte(addr >> 24), // .
@@ -110,14 +111,14 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
                 0xff, 0xe0,                         // JMP RAX
         }
         r11JmpTo:= []byte {
-                0x49, 0xc7,0xc3,                         // MOV r11, addr
+                0x49, 0xbb,                         // MOV r11, addr
                 byte(addr), byte(addr >> 8),        // .
                 byte(addr >> 16), byte(addr >> 24), // .
                 byte(addr >> 32), byte(addr >> 40), // .
                 byte(addr >> 48), byte(addr >> 56), // .
                 0x41,0xff, 0xe3,                         // JMP R11
         }
-        jmpToTo:= r11jmpTo
+        jmpToTo:= r11JmpTo
         if B == false {
            jmpToTo=raxJmpTo
         }
@@ -181,7 +182,7 @@ func checkLive( from uintptr,lenf int) (bool,bool) {
         if err != nil {
            return false,false
         }
-        if  strings.HasPrefix(i.Opcode.String(),"CMP") { 
+        if  strings.HasPrefix(i.Op.String(),"CMP") { 
             continue
         }
         if i.Args[0] != nil  {
@@ -193,7 +194,7 @@ func checkLive( from uintptr,lenf int) (bool,bool) {
              okB=false
           }
         }
-        if  strings.HasPrefix(i.Opcode.String(),"XCHG") { 
+        if  strings.HasPrefix(i.Op.String(),"XCHG") { 
           if i.Args[1] != nil  {
           s:=i.Args[1].String()
           if    ("RAX" == s ) || ("EAX" == s ) || ( "AX" == s ) || ( "AH" == s ) || ( "AL" == s ) {
