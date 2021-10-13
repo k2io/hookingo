@@ -223,31 +223,17 @@ func checkLive( from uintptr,lenf int) (bool,bool) {
       }
       return okA,okB
 }
-// ---
-// current scheme 
-//     jmper saved as before
-//        orig-12-code, push rax, push rax, rax<- restcode, pop rax, ret
-//     orig:
-//         mov rax, newaddress
-//         JMP RAX -- this code returns unwinds stack
-//         
-// ---
-// scheme 1: prefix hook
-//     jmper saved as before
-//        orig-12-code, push rax, push rax, rax<- restcode, pop rax, ret
-//     orig:
-//         mov rax, jumper !!! original code copy address
-//         push rax        !!!
-//         mov rax, newaddress
-//         JMP RAX -- this code returns unwinds stack to jumper.
-// ---
-// scheme 1: suffix hook
-//     jmper saved as before
-//        orig-12-code, push rax, push rax, rax<- restcode, pop rax, ret
-//     orig:
-//         mov rax, newaddress
-//         push rax        !!!
-//         mov rax, jumper !!!
-//         JMP RAX -- this code returns unwinds stack
-//         TODO: need to restore return values from part1
-// ---
+
+// --------
+// --- origFoo
+// ------- first ensureLength bytes taken and copied to toc
+// ------- RAX <- address-of-to
+// ------- JMP RAX
+// ----origFooNext: NOP
+// toc 
+//   copied N bytes
+//   R11 or RAX <- address-of-origFooNext
+//   JMP R11 or RAX
+// to: -- wrap hook --
+//      call toc(arg...)
+// 
