@@ -6,7 +6,7 @@ import (
         "golang.org/x/arch/x86/x86asm"
         "strings"
 )
-var hdebug=false
+var hdebug=true
 func SetDebug(x bool) {
 	hdebug=x
 }
@@ -37,9 +37,39 @@ func locateStackCheck( from uintptr ) ( uintptr ) {
         return uintptr(0)
 }
 
+func locateStackCheckNew( from uintptr) (uintptr) {
+        n:=64
+        src := makeSlice(from, 64)
+        lenx:=n
+        lenf:=n
+        for x:=0;x< lenf; x=x+lenx{
+            i, err := x86asm.Decode(src[x:], 64)
+            if hdebug && (err==nil) {
+               println("DEBUG: decode-for-stackCheck:",i.String())
+            }
+            if err != nil {
+               println("DEBUG: failed to decode-for-stackCheck:",err.Error())
+               return  uintptr(0)
+            }
+            if  strings.HasPrefix(i.Op.String(),"JB") { 
+               return uintptr(x+i.Len)
+            }
+            if  strings.HasPrefix(i.Op.String(),"JMP") { 
+               return uintptr(x+i.Len)
+            }
+            lenx=i.Len
+        }
+        return uintptr(0)
+}
 func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 
         n := locateStackCheck(fromv)
+        n1 := locateStackCheckNew(fromv)
+        if n1!=n {
+             if hdebug {
+                 println("DEBUG--- locateStackCheck using decode != adhoc method")
+             }
+        }
         from:= fromv+n
         //locate first jbe --> 0x76 dd or 0x0f 0x86 dd dd dd dd
 	if hdebug {
