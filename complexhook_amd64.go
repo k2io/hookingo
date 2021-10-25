@@ -11,32 +11,6 @@ func SetDebug(x bool) {
 	hdebug=x
 }
 
-func locateStackCheck( from uintptr ) ( uintptr ) {
-        n:=64
-	x := makeSlice(from, 64)
-        // do do --- disassemble until first JBE or jump encountered
-
-        for i,b := range x {
-		if hdebug {
-			println("DEBUG:addr:",from+uintptr(i)," ",i," ",x[i])
-		}
-           if b == 0x76 {
-              return uintptr(i+2)
-           }
-           if b == 0x0f {
-              if i < (n-6) {
-                  if x[i+1] == 0x86 {
-			  if hdebug {
-				  println("DEBUG:addr:",from+uintptr(i)," ",i+1," ",x[i+1])
-			  }
-                     return uintptr(i+6)
-                  }
-              }
-           }
-        }
-        return uintptr(0)
-}
-
 func locateStackCheckNew( from uintptr) (uintptr) {
         n:=64
         src := makeSlice(from, 64)
@@ -61,15 +35,11 @@ func locateStackCheckNew( from uintptr) (uintptr) {
         }
         return uintptr(0)
 }
+
+
 func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 
-        n := locateStackCheck(fromv)
-        n1 := locateStackCheckNew(fromv)
-        if n1!=n {
-             if hdebug {
-                 println("DEBUG--- locateStackCheck using decode != adhoc method")
-             }
-        }
+        n:= uintptr(0)
         from:= fromv+n
         //locate first jbe --> 0x76 dd or 0x0f 0x86 dd dd dd dd
 	if hdebug {
@@ -84,10 +54,15 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 		}
 		return nil, err
 	}
-        A,B := checkLive(fromv,inf.length)
+        A,B,stkUnmodified := checkLiveAndStackUpdates(fromv,inf.length)
         if !A && !B {
 	    if hdebug {
 	        println("no scratch reg found.")
+	    }
+           return nil,nil
+        }else if !stkUnmodified {
+	    if hdebug {
+	        println("RSP updates in header - cannot patch.")
 	    }
            return nil,nil
         }
@@ -199,9 +174,11 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	return hk, nil
 }
 
-func checkLive( from uintptr,lenf int) (bool,bool) {
+// updates for rax r11 rsp
+func checkLiveAndStackUpdates( from uintptr,lenf int) (bool,bool,bool) {
       okA:=true
       okB:=true
+      stkUnModified:=true
       src := makeSlice(from,uintptr(lenf))
       lenx:=lenf
       if hdebug {
@@ -210,9 +187,12 @@ func checkLive( from uintptr,lenf int) (bool,bool) {
       for x:=0;x< lenf; x=x+lenx{
         i, err := x86asm.Decode(src[x:], 64)
         if err != nil {
-           return false,false
+           return false,false,false
         }
-        if  strings.HasPrefix(i.Op.String(),"CMP") { 
+        if strings.HasPrefix(i.Op.String(),"PUSH") || strings.HasPrefix(i.Op.String(),"POP")  {
+             stkUnModified = false
+        }
+        if  strings.HasPrefix(i.Op.String(),"CMP") {
             continue
         }
         if i.Args[0] != nil  {
@@ -222,6 +202,9 @@ func checkLive( from uintptr,lenf int) (bool,bool) {
           }
           if    ("R11" == s ) {
              okB=false
+          }
+          if "RSP" == s {
+                stkUnModified=false
           }
         }
         if  strings.HasPrefix(i.Op.String(),"XCHG") { 
@@ -249,9 +232,10 @@ func checkLive( from uintptr,lenf int) (bool,bool) {
         if hdebug {
            println(" regAX available: ",okA)
            println(" regR11 available: ",okB)
+           println(" RSP unmodified: ",stkUnModified)
         }
       }
-      return okA,okB
+      return okA,okB,stkUnModified
 }
 
 // --------
