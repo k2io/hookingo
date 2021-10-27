@@ -19,7 +19,9 @@ func applyWrapHook(from, to, toc uintptr) (*hook, error) {
 	srcv := makeSlice(from, 32)
 	src := makeSlice(from, 32)
 
-	inf, err := ensureLength(src, 13+1) // PUSH POP was 13+1
+        retseqLen:=0 //NOP
+        maxpatchLen:=13
+	inf, err := ensureLength(src, maxpatchLen+retseqLen) // PUSH POP was 13+1
 	if err != nil {
 		if hdebug {
 			 println("early-exit: ensureLength  - err")
@@ -59,7 +61,6 @@ func applyWrapHook(from, to, toc uintptr) (*hook, error) {
 	}
         // code to return to origMethod
         // this is inserted in cannibalized code.
-        retseqLen:=1 //NOP
 	addr := from + uintptr(inf.length-retseqLen) //addr of POP
         raxseq:= []byte {
 		0x48, 0xb8,                         // MOV RAX, addr
@@ -76,6 +77,10 @@ func applyWrapHook(from, to, toc uintptr) (*hook, error) {
                 byte(addr >> 32), byte(addr >> 40), // .
                 byte(addr >> 48), byte(addr >> 56), // .
                 0x41,0xff, 0xe3,                         // JMP R11
+        }
+        if (len(r11seq) > maxpatchLen) || (len(r11seq) > maxpatchLen) {
+		reProtectPages(from,pageSize)
+                return nil,errors.New("code seq larger than expected")
         }
         jmpOrig:= r11seq
         if B == false  {
@@ -130,6 +135,9 @@ func applyWrapHook(from, to, toc uintptr) (*hook, error) {
         //3. insert POP at end of orig code.
 
         nopAtTgt:=true
+        if retseqLen == 0 {
+            nopAtTgt=false
+        }
         if nopAtTgt {
            instAtTgt:= []byte {
                 0x90, //nop
