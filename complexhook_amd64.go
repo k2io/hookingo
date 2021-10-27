@@ -5,46 +5,18 @@ package hookingo
 import (
         "golang.org/x/arch/x86/x86asm"
         "strings"
+        "errors"
 )
 var hdebug=true
 func SetDebug(x bool) {
 	hdebug=x
 }
 
-func locateStackCheckNew( from uintptr) (uintptr) {
-        n:=64
-        src := makeSlice(from, 64)
-        lenx:=n
-        lenf:=n
-        for x:=0;x< lenf; x=x+lenx{
-            i, err := x86asm.Decode(src[x:], 64)
-            if hdebug && (err==nil) {
-               println("DEBUG: decode-for-stackCheck:",i.String())
-            }
-            if err != nil {
-               println("DEBUG: failed to decode-for-stackCheck:",err.Error())
-               return  uintptr(0)
-            }
-            if  strings.HasPrefix(i.Op.String(),"JB") { 
-               return uintptr(x+i.Len)
-            }
-            if  strings.HasPrefix(i.Op.String(),"JMP") { 
-               return uintptr(x+i.Len)
-            }
-            lenx=i.Len
-        }
-        return uintptr(0)
-}
 
 
-func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
+func applyWrapHook(from, to, toc uintptr) (*hook, error) {
 
-        n:= uintptr(0)
-        from:= fromv+n
-        //locate first jbe --> 0x76 dd or 0x0f 0x86 dd dd dd dd
-	if hdebug {
-		println("relocating wrap by ..",n)
-	}
+	srcv := makeSlice(from, 32)
 	src := makeSlice(from, 32)
 
 	inf, err := ensureLength(src, 13+1) // PUSH POP was 13+1
@@ -54,17 +26,20 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 		}
 		return nil, err
 	}
-        A,B,stkUnmodified := checkLiveAndStackUpdates(fromv,inf.length)
+	if hdebug {
+		println("Patch-region Length ..",inf.length)
+	}
+        A,B,stkUnmodified := checkLiveAndStackUpdates(from,inf.length)
         if !A && !B {
 	    if hdebug {
 	        println("no scratch reg found.")
 	    }
-           return nil,nil
+           return nil,errors.New("no scratch reg found-cannot hook")
         }else if !stkUnmodified {
 	    if hdebug {
 	        println("RSP updates in header - cannot patch.")
 	    }
-           return nil,nil
+           return nil,errors.New("RSPupdates -cannot hook")
         }
 	err = protectPages(from, uintptr(inf.length))
 	if err != nil {
@@ -80,7 +55,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 			 println("early-exit: NotRelocatable")
 		}
 		reProtectPages(from,pageSize)
-                return hk,nil
+                return hk,errors.New("NotRelocatable - cannot hook")
 	}
         // code to return to origMethod
         // this is inserted in cannibalized code.
@@ -142,7 +117,7 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	hk.target = src
 	if hdebug {
           println("Before-from:",hk.jumper)
-          for i:= range hk.jumper { if i> 32 {break;};println(hk.jumper[i]);}
+          for i:= range hk.jumper { if i> 32 {break;};println(srcv);}
           println("Before-method_s:",hk.target)
           for i:= range hk.jumper { if i> 32 {break;};println(hk.target[i]);}
         }
@@ -153,11 +128,15 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
 	dst = makeSlice(from,uintptr(inf.length))
         copy(dst,jmpToTo)
         //3. insert POP at end of orig code.
-        instAtTgt:= []byte {
+
+        nopAtTgt:=true
+        if nopAtTgt {
+           instAtTgt:= []byte {
                 0x90, //nop
+           }
+	   dst = makeSlice(from+uintptr(inf.length-len(instAtTgt)),uintptr(len(instAtTgt)))
+	   copy(dst, instAtTgt)
         }
-	dst = makeSlice(from+uintptr(inf.length-len(instAtTgt)),uintptr(len(instAtTgt)))
-	copy(dst, instAtTgt)
         //4. toc overwritten to return to POP
 	dst = makeSlice(toc+uintptr(inf.length),uintptr(len(jmpOrig)))
         copy(dst,jmpOrig)
@@ -166,10 +145,11 @@ func applyWrapHook(fromv, to, toc uintptr) (*hook, error) {
         reProtectPages(from,pageSize)
 
 	if hdebug {
-          println("Before-from:",hk.jumper)
-          for i:= range hk.jumper { if i> 32 {break;};println(hk.jumper[i]);}
-          println("Before-method_s:",hk.target)
+          println("After-from:",hk.jumper)
+          for i:= range hk.jumper { if i> 32 {break;};println(srcv);}
+          println("After-method_s:",hk.target)
           for i:= range hk.jumper { if i> 32 {break;};println(hk.target[i]);}
+          println("done.")
         }
 	return hk, nil
 }
@@ -182,12 +162,15 @@ func checkLiveAndStackUpdates( from uintptr,lenf int) (bool,bool,bool) {
       src := makeSlice(from,uintptr(lenf))
       lenx:=lenf
       if hdebug {
-          println(" start  ----------------------------------------------- ")
+          println(" start checkLive  ----------------------------------------------- ")
       }
       for x:=0;x< lenf; x=x+lenx{
         i, err := x86asm.Decode(src[x:], 64)
         if err != nil {
            return false,false,false
+        }
+        if hdebug {
+          println(" instr: ",x," opcode: ",i.String())
         }
         if strings.HasPrefix(i.Op.String(),"PUSH") || strings.HasPrefix(i.Op.String(),"POP")  {
              stkUnModified = false
@@ -220,7 +203,7 @@ func checkLiveAndStackUpdates( from uintptr,lenf int) (bool,bool,bool) {
         }
         lenx=i.Len
         if hdebug {
-          println(" found ... ",i.String(),"len:",i.Len)
+          println(" found ... ",i.String()," len: ",i.Len)
         }
 
         for _,a := range(i.Args) {
