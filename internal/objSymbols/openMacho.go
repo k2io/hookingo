@@ -26,5 +26,5 @@ func (f *machoFile) Symbols() (map[string]uintptr, error) {
 		elfOff[s.Name] = uintptr(s.Value)
 
 	}
-	return nil, nil
+	return elfOff, nil
 }

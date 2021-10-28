@@ -5,7 +5,5 @@ import (
 )
 
 func GetSymbols(name string) (map[string]uintptr, error) {
-
 	return sym.ReadSymbols(name)
-
 }
