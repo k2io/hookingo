@@ -16,8 +16,9 @@ func SetDebug(x bool) {
 
 func applyWrapHook(from, to, toc uintptr) (*hook, error) {
 
-	srcv := makeSlice(from, 32)
-	src := makeSlice(from, 32)
+        fromv:=from 
+	srcv := makeSlice(fromv, 32)
+	src := makeSlice(fromv, 32)
 
         retseqLen:=0 //NOP
         maxpatchLen:=13
@@ -31,17 +32,37 @@ func applyWrapHook(from, to, toc uintptr) (*hook, error) {
 	if hdebug {
 		println("Patch-region Length ..",inf.length)
 	}
-        A,B,stkUnmodified := checkLiveAndStackUpdates(from,inf.length)
+        A,B,stkUnmodified,skip := checkLiveAndStackUpdates(from,inf.length)
         if !A && !B {
 	    if hdebug {
 	        println("no scratch reg found.")
 	    }
            return nil,errors.New("no scratch reg found-cannot hook")
         }else if !stkUnmodified {
-	    if hdebug {
-	        println("RSP updates in header - cannot patch.")
+            if skip  < 0 {
+	      if hdebug {
+	          println("RSP updates in header - cannot patch.")
+	      }
+              return nil,errors.New("RSPupdates -cannot hook")
+            }
+            println("--- change hookpt by ----",skip)
+	    from=from+uintptr(skip)
+	    src = makeSlice(from, 32)
+	    inf, err = ensureLength(src, maxpatchLen+retseqLen) // PUSH POP was 13+1
+	    if err != nil {
+                println("--- patchlen failed----",err.Error())
+		if hdebug {
+			 println("early-exit: ensureLength  - err")
+		}
+		return nil, err
 	    }
-           return nil,errors.New("RSPupdates -cannot hook")
+            println("--- patchlen----",inf.length)
+        }
+
+        if skip >0 {
+          //checktarget(toc,skip)
+        } else {
+
         }
 	err = protectPages(from, uintptr(inf.length))
 	if err != nil {
@@ -163,25 +184,37 @@ func applyWrapHook(from, to, toc uintptr) (*hook, error) {
 }
 
 // updates for rax r11 rsp
-func checkLiveAndStackUpdates( from uintptr,lenf int) (bool,bool,bool) {
+func checkLiveAndStackUpdates( from uintptr,lenf int) (bool,bool,bool,int) {
       okA:=true
       okB:=true
       stkUnModified:=true
+      skip:=-1
+      countStkUpdate:=0
+      stkUpdInstr:=0
+
+      featureHandleNoStkChk:=false
       src := makeSlice(from,uintptr(lenf))
       lenx:=lenf
       if hdebug {
           println(" start checkLive  ----------------------------------------------- ")
       }
+      adj16:=false
       for x:=0;x< lenf; x=x+lenx{
         i, err := x86asm.Decode(src[x:], 64)
         if err != nil {
-           return false,false,false
+           return false,false,false,skip
         }
         if hdebug {
-          println(" instr: ",x," opcode: ",i.String())
+          println(" instr: ",x," len:",i.Len," opcode: ",i.String())
         }
-        if strings.HasPrefix(i.Op.String(),"PUSH") || strings.HasPrefix(i.Op.String(),"POP")  {
+        if strings.HasPrefix(i.Op.String(),"PUSH")  {
              stkUnModified = false
+             countStkUpdate++
+             stkUpdInstr=-1
+        }else if strings.HasPrefix(i.Op.String(),"POP")  {
+             stkUnModified = false
+             countStkUpdate++
+             stkUpdInstr=-1
         }
         if  strings.HasPrefix(i.Op.String(),"CMP") {
             continue
@@ -195,7 +228,16 @@ func checkLiveAndStackUpdates( from uintptr,lenf int) (bool,bool,bool) {
              okB=false
           }
           if "RSP" == s {
-                stkUnModified=false
+             stkUnModified=false
+             countStkUpdate++
+             stkUpdInstr=-1
+             if strings.HasPrefix(i.Op.String(),"SUB") {
+                y:=i.Args[1].String()
+                if y == "0x10" { 
+                   adj16=true
+                }
+                stkUpdInstr=x+i.Len
+             }
           }
         }
         if  strings.HasPrefix(i.Op.String(),"XCHG") { 
@@ -226,7 +268,13 @@ func checkLiveAndStackUpdates( from uintptr,lenf int) (bool,bool,bool) {
            println(" RSP unmodified: ",stkUnModified)
         }
       }
-      return okA,okB,stkUnModified
+      if (stkUnModified==false) && (countStkUpdate == 1) && (adj16==true){
+         if featureHandleNoStkChk  {
+            println("----------found header with skip ",stkUpdInstr)
+            return okA,okB,stkUnModified,stkUpdInstr
+         }
+      }
+      return okA,okB,stkUnModified,-1
 }
 
 // --------
