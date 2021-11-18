@@ -6,17 +6,207 @@ import (
         "golang.org/x/arch/x86/x86asm"
         "strings"
         "errors"
+	"strconv"
+        "runtime"
 )
-var hdebug=true
+var hdebug=false
 func SetDebug(x bool) {
 	hdebug=x
 }
 
+var gomajor=-1 
+var gominor=-1
 
+func goAfter1_16() bool {
+    if gomajor==-1 {
+      s:=runtime.Version()
+      sa:=strings.Split(s,".")
+      major,_:=strconv.Atoi(strings.TrimPrefix(sa[0],"go"))
+      minor,_:=strconv.Atoi(sa[1])
+      gomajor=major
+      gominor=minor
+    }
+    if (gomajor==1) && (gominor>16) {
+         return true
+    }else if gomajor>1 { 
+         return true 
+    }
+    return false
+}
 
 func applyWrapHook(from, to, toc uintptr) (*hook, error) {
+     if goAfter1_16() {
+         a,b:= applyWrapHookShort(from,to,toc)
+         return a,b
+     }else {
+         a,b:= applyWrapHookLong(from,to,toc)
+         return a,b
+     }
+}
 
-        fromv:=from 
+func isLea(i string) bool {
+    if  strings.HasPrefix(i,"LEA") {
+        return true
+    }
+    return false
+}
+func isCmp(i string) bool {
+    if  strings.HasPrefix(i,"CMP") {
+        return true
+    }
+    return false
+}
+
+func isJrel(i string) bool {
+    if  strings.HasPrefix(i,"JB") {
+        return true
+    }
+    if  strings.HasPrefix(i,"JZ") {
+        return true
+    }
+    if  strings.HasPrefix(i,"JN") {
+        return true
+    }
+    if  strings.HasPrefix(i,"JCX") {
+        return true
+    }
+    return false
+}
+// - shorter sequence -- only covers 32bit jump --
+func applyWrapHookShort(from,to,toc uintptr) (*hook,error) {
+        fromv:=from
+	srcv := makeSlice(fromv, 32)
+	src := makeSlice(fromv, 32)
+
+        maxPatchLen:=uintptr(5)
+
+        ok1,skip,fromPostStackCheck:=locateAfterStackCheck(from)
+        if !ok1 {
+                err:=errors.New("unable to locate stackcheck in hooked fn")
+                if hdebug {
+                         println("early-exit: no-stack-check-in hooked method!")
+                }
+                return nil, err
+        }
+        ok,_,tocPostStackCheck:=locateAfterStackCheck(toc)
+        if !ok {
+                err:=errors.New("unable to locate stackcheck in _s")
+		if hdebug {
+			 println("early-exit: no-stack-check-in _s method!")
+		}
+		return nil, err
+        }
+        if (fromPostStackCheck-skip+1) < uintptr(maxPatchLen) {
+                err:=errors.New("need longer patch sequence space than 5")
+		return nil, err
+        }
+        fromSkip:=from+skip
+        // fromSkip: Jrel to
+        // tocPostStackCheck: JMP fromPostStackCheck
+        infLen:= fromPostStackCheck - fromSkip +1
+	err:= protectPages(fromSkip, maxPatchLen)
+	if err != nil {
+		if hdebug {
+			 println("early-exit: CannotProtectPage - orig")
+		}
+		return nil, err
+	}
+
+        jmp32relLen:= uintptr(5) //jrel32
+        if overflowsS32(fromPostStackCheck+jmp32relLen,tocPostStackCheck) {
+		if hdebug {
+			 println("early-exit: from,hook >32bit rel offset needed")
+		}
+                return nil,errors.New(">32bit rel offset - calc1")
+        }
+        if overflowsS32(fromSkip+jmp32relLen,to) {
+		if hdebug {
+			 println("early-exit: to,from >32bit rel offset needed")
+		}
+                return nil,errors.New(">32bit rel offset - calc2")
+        }
+	hk := &hook{}
+        // code to return to origMethod
+        // this is inserted in cannibalized code.
+	addrtgt := fromPostStackCheck
+        myaddr:= tocPostStackCheck
+        addr:=  addrtgt - myaddr  -  jmp32relLen
+        seq:= []byte {
+                0xe9,                               // JMP rel32
+                byte(addr), byte(addr >> 8),        // .
+		byte(addr >> 16), byte(addr >> 24), // .
+        }
+        xlen:= len(seq)
+        jmpOrig:= seq
+
+        addrtgt = to
+        myaddr= fromSkip
+        addr=  addrtgt - myaddr  -  jmp32relLen
+        JmpTo:= []byte {
+                0xe9,
+                byte(addr), byte(addr >> 8),        // .
+                byte(addr >> 16), byte(addr >> 24), // .
+        }
+        xlenTo:=len(JmpTo)
+        jmpToTo:= JmpTo
+	err = protectPages(tocPostStackCheck, maxPatchLen)
+	if err != nil {
+		reProtectPages(fromSkip,maxPatchLen)
+		if hdebug {
+			 println("early-exit: ProtectPage  tgt failed.")
+		}
+		return nil, err
+	}
+
+	dst := makeSlice(tocPostStackCheck,uintptr(xlen))
+	src = makeSlice(fromSkip,uintptr(infLen))
+	hk.jumper = dst
+	hk.target = src
+	if hdebug {
+          println("Before-from:",hk.jumper)
+          for i:= range hk.jumper { if i> 32 {break;};println(srcv);}
+          println("Before-method_s:",hk.target)
+          for i:= range hk.jumper { if i> 32 {break;};println(hk.target[i]);}
+        }
+
+        //1. origFn first bytes copied to toc
+	// no copy -- copy(dst, src)
+        //2. origFn overwritten to jmp to to
+	dst = makeSlice(fromSkip,uintptr(xlenTo))
+        copy(dst,jmpToTo)
+        //3. insert NOP/POP at end of orig code.
+
+        //4. toc overwritten to return to POP
+	dst= makeSlice(tocPostStackCheck,uintptr(xlen))
+        copy(dst,jmpOrig)
+        reProtectPages(tocPostStackCheck,maxPatchLen)
+        reProtectPages(fromPostStackCheck,maxPatchLen)
+
+	if hdebug {
+          println("After-from:",hk.jumper)
+          for i:= range hk.jumper { if i> 32 {break;};println(srcv);}
+          println("After-method_s:",hk.target)
+          for i:= range hk.jumper { if i> 32 {break;};println(hk.target[i]);}
+          println("done.")
+        }
+	return hk, nil
+}
+
+func overflowsS32( v1,v2 uintptr) bool {
+
+     diff:= v2-v1
+     if v1 > v2 {
+        diff=v1-v2
+     }
+     maxS32:= uintptr( int(^uint(0)>>1) )
+     if diff > maxS32 {
+       return true
+     }
+     return false
+}
+// long jump indirect -- requuires 13-14 bytes sequence
+func applyWrapHookLong(from,to,toc uintptr) (*hook,error) { 
+        fromv:=from
 	srcv := makeSlice(fromv, 32)
 	src := makeSlice(fromv, 32)
 
@@ -45,18 +235,15 @@ func applyWrapHook(from, to, toc uintptr) (*hook, error) {
 	      }
               return nil,errors.New("RSPupdates -cannot hook")
             }
-            println("--- change hookpt by ----",skip)
 	    from=from+uintptr(skip)
 	    src = makeSlice(from, 32)
 	    inf, err = ensureLength(src, maxpatchLen+retseqLen) // PUSH POP was 13+1
 	    if err != nil {
-                println("--- patchlen failed----",err.Error())
 		if hdebug {
 			 println("early-exit: ensureLength  - err")
 		}
 		return nil, err
 	    }
-            println("--- patchlen----",inf.length)
         }
 
         if skip >0 {
@@ -183,6 +370,38 @@ func applyWrapHook(from, to, toc uintptr) (*hook, error) {
 	return hk, nil
 }
 
+func locateAfterStackCheck( toc uintptr) (bool,uintptr, uintptr) {
+        lookwindow:=32
+        lenx:=0
+        skip:=0
+        u0:=uintptr(0)
+        src:=makeSlice(toc,uintptr(lookwindow))
+        for x:=0;x< lookwindow; x=x+lenx{
+               i, err := x86asm.Decode(src[x:], 64)
+               if err != nil {
+                  return false,u0,u0
+               }
+               //println(x,":---locate stackCheck :",i.String()," skip-",skip,"x=",x)
+               if (skip==x) && isCmp(i.Op.String()) {
+                     lenx=i.Len
+                 // println("---CMP -- ",i.String())
+               } else if (skip==0) && isLea(i.Op.String()) {
+                     skip =i.Len
+                     lenx=i.Len
+                 // println("---Lea -- ",i.String())
+               }else if (x!=skip)&& isJrel(i.Op.String()) {
+                  //println("---Jrel -- ",i.String())
+                  //println("---return SUCCESS locate stackChehck",i.String())
+                  return true,uintptr(skip),toc+uintptr(+x+i.Len)
+               }else {
+                  //println("---FAILED locate stackChehck",i.String())
+                  return false,u0,u0
+               }
+
+        }
+        //println("---FAILED locate stackChehck")
+        return false,u0,u0
+}
 // updates for rax r11 rsp
 func checkLiveAndStackUpdates( from uintptr,lenf int) (bool,bool,bool,int) {
       okA:=true
