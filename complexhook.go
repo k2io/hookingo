@@ -1,37 +1,37 @@
-// we drop this file in hookingo lib
+// Copyright (C) 2022 K2 Cyber Security Inc.
 package hookingo
 
 import (
- "reflect"
- "unsafe"
+	"reflect"
+	"unsafe"
 )
-func init () {
-}
-func ApplyWrapRaw(from uintptr, to,toc interface{}) (*hook,error) {
 
-  
-        vt := reflect.ValueOf(to)
-        vc := reflect.ValueOf(toc) // this is typically same as vt
-   
-        return applyWrap(from, vt.Pointer(), vc.Pointer(),nil)
+func init() {
+}
+func ApplyWrapRaw(from uintptr, to, toc interface{}) (*hook, error) {
+
+	vt := reflect.ValueOf(to)
+	vc := reflect.ValueOf(toc) // this is typically same as vt
+
+	return applyWrap(from, vt.Pointer(), vc.Pointer(), nil)
 }
 
-func ApplyWrapInterface(from,to,toc interface {}) (*hook,error) {
-
-        vf := reflect.ValueOf(from)
-        vt := reflect.ValueOf(to)
-        vc := reflect.ValueOf(toc) // this is typically same as vt
-        if vf.Kind() != reflect.Func {
-                return nil, ErrInputType
-        }
-        e := (*eface)(unsafe.Pointer(&from))
-        return applyWrap(vf.Pointer(), vt.Pointer(), vc.Pointer(),e.typ)
-}
-func ApplyWrap(from,to,toc interface {}) (*hook,error) {
+func ApplyWrapInterface(from, to, toc interface{}) (*hook, error) {
 
 	vf := reflect.ValueOf(from)
 	vt := reflect.ValueOf(to)
-        vc := reflect.ValueOf(toc) // this is typically same as vt
+	vc := reflect.ValueOf(toc) // this is typically same as vt
+	if vf.Kind() != reflect.Func {
+		return nil, ErrInputType
+	}
+	e := (*eface)(unsafe.Pointer(&from))
+	return applyWrap(vf.Pointer(), vt.Pointer(), vc.Pointer(), e.typ)
+}
+func ApplyWrap(from, to, toc interface{}) (*hook, error) {
+
+	vf := reflect.ValueOf(from)
+	vt := reflect.ValueOf(to)
+	vc := reflect.ValueOf(toc) // this is typically same as vt
 	if vf.Type() != vt.Type() {
 		return nil, ErrDifferentType
 	}
@@ -42,10 +42,10 @@ func ApplyWrap(from,to,toc interface {}) (*hook,error) {
 		return nil, ErrInputType
 	}
 	e := (*eface)(unsafe.Pointer(&from))
-	return applyWrap(vf.Pointer(), vt.Pointer(), vc.Pointer(),e.typ)
+	return applyWrap(vf.Pointer(), vt.Pointer(), vc.Pointer(), e.typ)
 }
 
-func applyWrap(from, to,toc uintptr, typ unsafe.Pointer) (*hook, error) {
+func applyWrap(from, to, toc uintptr, typ unsafe.Pointer) (*hook, error) {
 	lock.Lock()
 	defer lock.Unlock()
 	_, ok := hooks[from]
@@ -58,7 +58,7 @@ func applyWrap(from, to,toc uintptr, typ unsafe.Pointer) (*hook, error) {
 	f := &funcval{}
 	// early bucket allocation
 	hooks[from] = nil
-	h, err := applyWrapHook(from, to,toc) //in assembly
+	h, err := applyWrapHook(from, to, toc) //in assembly
 	if err != nil {
 		return nil, err
 	}

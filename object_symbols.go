@@ -1,3 +1,4 @@
+// Copyright (C) 2022 K2 Cyber Security Inc.
 package hookingo
 
 import (
