@@ -1,7 +1,32 @@
 // Copyright (C) 2022 K2 Cyber Security Inc.
+/*
+Hooking in go-lang
+hooking is achieved by modifying the target function code to jump to a hook function and with the help of a substitute function, hook function called the original function. This enables the wrapping of the target function without modifying the user code.
+
+How we done this:
+
+ORIGINAL FUNCTION (target function)
+WRAP FUNCTION (hook function)
+SUBSTITUTE FUNCTION
+What we are doing with all these Functions in Hooking
+
+***Original function***
+ - Adding a Jump to WRAP FUNCTION address
+
+***Wrap function***
+ - Access ORIGINAL FUNCTION argument and call SUBSTITUTE FUNCTION with same arguments
+
+
+***SUBSTITUTE FUNCTION***
+ *SUBSTITUTE FUNCTION has N copied Bytes from ORIGINAL FUNCTION
+  - Adding a Jump to ORIGINAL FUNCTION address
+  - Execute the ORIGINAL FUNCTION and return back to WRAP FUNCTION
+  - WRAP FUNCTION access post function call argument and return back to caller
+
+*/
+
 package hookingo
 
-//import ( "unsafe" )
 import (
 	"errors"
 	"runtime"
@@ -11,14 +36,16 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
-var hdebug = false
+var isDebug = false
 
 func SetDebug(x bool) {
-	hdebug = x
+	isDebug = x
 }
 
-var gomajor = -1
-var gominor = -1
+var (
+	gomajor = -1
+	gominor = -1
+)
 
 func goAfter1_16() bool {
 	if gomajor == -1 {
@@ -35,16 +62,6 @@ func goAfter1_16() bool {
 		return true
 	}
 	return false
-}
-
-func applyWrapHook(from, to, toc uintptr) (*hook, error) {
-	if goAfter1_16() {
-		a, b := applyWrapHookShort(from, to, toc)
-		return a, b
-	} else {
-		a, b := applyWrapHookLong(from, to, toc)
-		return a, b
-	}
 }
 
 func isLea(i string) bool {
@@ -76,7 +93,20 @@ func isJrel(i string) bool {
 	return false
 }
 
+func applyWrapHook(from, to, toc uintptr) (*hook, error) {
+	if goAfter1_16() {
+		h, err := applyWrapHookShort(from, to, toc)
+		return h, err
+	} else {
+		h, err := applyWrapHookLong(from, to, toc)
+		return h, err
+	}
+}
+
+// applyWrapHookShort
 // - shorter sequence -- only covers 32bit jump --
+// for go version 1.17+
+
 func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	fromv := from
 	srcv := makeSlice(fromv, 32)
@@ -87,7 +117,7 @@ func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	ok1, skip, fromPostStackCheck := locateAfterStackCheck(from)
 	if !ok1 {
 		err := errors.New("unable to locate stackcheck in hooked fn")
-		if hdebug {
+		if isDebug {
 			println("early-exit: no-stack-check-in hooked method!")
 		}
 		return nil, err
@@ -95,7 +125,7 @@ func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	ok, _, tocPostStackCheck := locateAfterStackCheck(toc)
 	if !ok {
 		err := errors.New("unable to locate stackcheck in _s")
-		if hdebug {
+		if isDebug {
 			println("early-exit: no-stack-check-in _s method!")
 		}
 		return nil, err
@@ -110,7 +140,7 @@ func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	infLen := fromPostStackCheck - fromSkip + 1
 	err := protectPages(fromSkip, maxPatchLen)
 	if err != nil {
-		if hdebug {
+		if isDebug {
 			println("early-exit: CannotProtectPage - orig")
 		}
 		return nil, err
@@ -118,13 +148,13 @@ func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 
 	jmp32relLen := uintptr(5) //jrel32
 	if overflowsS32(fromPostStackCheck+jmp32relLen, tocPostStackCheck) {
-		if hdebug {
+		if isDebug {
 			println("early-exit: from,hook >32bit rel offset needed")
 		}
 		return nil, errors.New(">32bit rel offset - calc1")
 	}
 	if overflowsS32(fromSkip+jmp32relLen, to) {
-		if hdebug {
+		if isDebug {
 			println("early-exit: to,from >32bit rel offset needed")
 		}
 		return nil, errors.New(">32bit rel offset - calc2")
@@ -156,7 +186,7 @@ func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	err = protectPages(tocPostStackCheck, maxPatchLen)
 	if err != nil {
 		reProtectPages(fromSkip, maxPatchLen)
-		if hdebug {
+		if isDebug {
 			println("early-exit: ProtectPage  tgt failed.")
 		}
 		return nil, err
@@ -166,7 +196,7 @@ func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	src = makeSlice(fromSkip, uintptr(infLen))
 	hk.jumper = dst
 	hk.target = src
-	if hdebug {
+	if isDebug {
 		println("Before-from:", hk.jumper)
 		for i := range hk.jumper {
 			if i > 32 {
@@ -196,7 +226,7 @@ func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	reProtectPages(tocPostStackCheck, maxPatchLen)
 	reProtectPages(fromPostStackCheck, maxPatchLen)
 
-	if hdebug {
+	if isDebug {
 		println("After-from:", hk.jumper)
 		for i := range hk.jumper {
 			if i > 32 {
@@ -229,7 +259,9 @@ func overflowsS32(v1, v2 uintptr) bool {
 	return false
 }
 
+// applyWrapHookLong
 // long jump indirect -- requuires 13-14 bytes sequence
+// for go version 1.13-1.16
 func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 	fromv := from
 	srcv := makeSlice(fromv, 32)
@@ -239,23 +271,23 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 	maxpatchLen := 13
 	inf, err := ensureLength(src, maxpatchLen+retseqLen) // PUSH POP was 13+1
 	if err != nil {
-		if hdebug {
+		if isDebug {
 			println("early-exit: ensureLength  - err")
 		}
 		return nil, err
 	}
-	if hdebug {
+	if isDebug {
 		println("Patch-region Length ..", inf.length)
 	}
 	A, B, stkUnmodified, skip := checkLiveAndStackUpdates(from, inf.length)
 	if !A && !B {
-		if hdebug {
+		if isDebug {
 			println("no scratch reg found.")
 		}
 		return nil, errors.New("no scratch reg found-cannot hook")
 	} else if !stkUnmodified {
 		if skip < 0 {
-			if hdebug {
+			if isDebug {
 				println("RSP updates in header - cannot patch.")
 			}
 			return nil, errors.New("RSPupdates -cannot hook")
@@ -264,7 +296,7 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 		src = makeSlice(from, 32)
 		inf, err = ensureLength(src, maxpatchLen+retseqLen) // PUSH POP was 13+1
 		if err != nil {
-			if hdebug {
+			if isDebug {
 				println("early-exit: ensureLength  - err")
 			}
 			return nil, err
@@ -278,7 +310,7 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 	}
 	err = protectPages(from, uintptr(inf.length))
 	if err != nil {
-		if hdebug {
+		if isDebug {
 			println("early-exit: CannotProtectPage - orig")
 		}
 		return nil, err
@@ -286,7 +318,7 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 	hk := &hook{}
 	if !inf.relocatable {
 		hk.origin = ErrRelativeAddr
-		if hdebug {
+		if isDebug {
 			println("early-exit: NotRelocatable")
 		}
 		reProtectPages(from, pageSize)
@@ -343,7 +375,7 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 	err = protectPages(toc, uintptr(inf.length+len(jmpOrig)))
 	if err != nil {
 		reProtectPages(from, pageSize)
-		if hdebug {
+		if isDebug {
 			println("early-exit: ProtectPage  tgt failed.")
 		}
 		return nil, err
@@ -353,7 +385,7 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 	src = makeSlice(from, uintptr(inf.length))
 	hk.jumper = dst
 	hk.target = src
-	if hdebug {
+	if isDebug {
 		println("Before-from:", hk.jumper)
 		for i := range hk.jumper {
 			if i > 32 {
@@ -395,7 +427,7 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 	reProtectPages(toc, pageSize)
 	reProtectPages(from, pageSize)
 
-	if hdebug {
+	if isDebug {
 		println("After-from:", hk.jumper)
 		for i := range hk.jumper {
 			if i > 32 {
@@ -460,7 +492,7 @@ func checkLiveAndStackUpdates(from uintptr, lenf int) (bool, bool, bool, int) {
 	featureHandleNoStkChk := false
 	src := makeSlice(from, uintptr(lenf))
 	lenx := lenf
-	if hdebug {
+	if isDebug {
 		println(" start checkLive  ----------------------------------------------- ")
 	}
 	adj16 := false
@@ -469,7 +501,7 @@ func checkLiveAndStackUpdates(from uintptr, lenf int) (bool, bool, bool, int) {
 		if err != nil {
 			return false, false, false, skip
 		}
-		if hdebug {
+		if isDebug {
 			println(" instr: ", x, " len:", i.Len, " opcode: ", i.String())
 		}
 		if strings.HasPrefix(i.Op.String(), "PUSH") {
@@ -517,7 +549,7 @@ func checkLiveAndStackUpdates(from uintptr, lenf int) (bool, bool, bool, int) {
 			}
 		}
 		lenx = i.Len
-		if hdebug {
+		if isDebug {
 			println(" found ... ", i.String(), " len: ", i.Len)
 		}
 
@@ -525,11 +557,11 @@ func checkLiveAndStackUpdates(from uintptr, lenf int) (bool, bool, bool, int) {
 			if a == nil {
 				break
 			}
-			if hdebug {
+			if isDebug {
 				println(" args: ... ", a.String())
 			}
 		}
-		if hdebug {
+		if isDebug {
 			println(" regAX available: ", okA)
 			println(" regR11 available: ", okB)
 			println(" RSP unmodified: ", stkUnModified)
@@ -543,17 +575,3 @@ func checkLiveAndStackUpdates(from uintptr, lenf int) (bool, bool, bool, int) {
 	}
 	return okA, okB, stkUnModified, -1
 }
-
-// --------
-// --- origFoo
-// ------- first ensureLength bytes taken and copied to toc
-// ------- RAX <- address-of-to
-// ------- JMP RAX
-// ----origFooNext: NOP
-// toc
-//   copied N bytes
-//   R11 or RAX <- address-of-origFooNext
-//   JMP R11 or RAX
-// to: -- wrap hook --
-//      call toc(arg...)
-//
