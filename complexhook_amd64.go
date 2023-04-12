@@ -34,6 +34,7 @@ import (
 	"strings"
 
 	"golang.org/x/arch/x86/x86asm"
+	"golang.org/x/sys/unix"
 )
 
 var isDebug = false
@@ -41,11 +42,6 @@ var isDebug = false
 func SetDebug(x bool) {
 	isDebug = x
 }
-
-var (
-	gomajor = -1
-	gominor = -1
-)
 
 func goAfter1_16() bool {
 	if gomajor == -1 {
@@ -65,16 +61,10 @@ func goAfter1_16() bool {
 }
 
 func isLea(i string) bool {
-	if strings.HasPrefix(i, "LEA") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(i, "LEA")
 }
 func isCmp(i string) bool {
-	if strings.HasPrefix(i, "CMP") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(i, "CMP")
 }
 
 func isJrel(i string) bool {
@@ -110,7 +100,7 @@ func applyWrapHook(from, to, toc uintptr) (*hook, error) {
 func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	fromv := from
 	srcv := makeSlice(fromv, 32)
-	src := makeSlice(fromv, 32)
+	//src := makeSlice(fromv, 32)
 
 	maxPatchLen := uintptr(5)
 
@@ -185,15 +175,15 @@ func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	jmpToTo := JmpTo
 	err = protectPages(tocPostStackCheck, maxPatchLen)
 	if err != nil {
-		reProtectPages(fromSkip, maxPatchLen)
+		err1 := reProtectPages(fromSkip, maxPatchLen)
 		if isDebug {
-			println("early-exit: ProtectPage  tgt failed.")
+			println("early-exit: ProtectPage  tgt failed.", err1)
 		}
 		return nil, err
 	}
 
 	dst := makeSlice(tocPostStackCheck, uintptr(xlen))
-	src = makeSlice(fromSkip, uintptr(infLen))
+	src := makeSlice(fromSkip, uintptr(infLen))
 	hk.jumper = dst
 	hk.target = src
 	if isDebug {
@@ -223,9 +213,14 @@ func applyWrapHookShort(from, to, toc uintptr) (*hook, error) {
 	//4. toc overwritten to return to POP
 	dst = makeSlice(tocPostStackCheck, uintptr(xlen))
 	copy(dst, jmpOrig)
-	reProtectPages(tocPostStackCheck, maxPatchLen)
-	reProtectPages(fromPostStackCheck, maxPatchLen)
-
+	err = reProtectPages(tocPostStackCheck, maxPatchLen)
+	if err != nil {
+		return nil, err
+	}
+	err = reProtectPages(fromPostStackCheck, maxPatchLen)
+	if err != nil {
+		return nil, err
+	}
 	if isDebug {
 		println("After-from:", hk.jumper)
 		for i := range hk.jumper {
@@ -253,10 +248,8 @@ func overflowsS32(v1, v2 uintptr) bool {
 		diff = v1 - v2
 	}
 	maxS32 := uintptr(int(^uint(0) >> 1))
-	if diff > maxS32 {
-		return true
-	}
-	return false
+
+	return diff > maxS32
 }
 
 // applyWrapHookLong
@@ -303,11 +296,11 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 		}
 	}
 
-	if skip > 0 {
-		//checktarget(toc,skip)
-	} else {
+	// if skip > 0 {
+	// 	//checktarget(toc,skip)
+	// } else {
 
-	}
+	// }
 	err = protectPages(from, uintptr(inf.length))
 	if err != nil {
 		if isDebug {
@@ -321,7 +314,10 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 		if isDebug {
 			println("early-exit: NotRelocatable")
 		}
-		reProtectPages(from, pageSize)
+		err := reProtectPages(from, pageSize)
+		if err != nil {
+			return nil, err
+		}
 		return hk, errors.New("NotRelocatable - cannot hook")
 	}
 	// code to return to origMethod
@@ -343,12 +339,15 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 		byte(addr >> 48), byte(addr >> 56), // .
 		0x41, 0xff, 0xe3, // JMP R11
 	}
-	if (len(r11seq) > maxpatchLen) || (len(r11seq) > maxpatchLen) {
-		reProtectPages(from, pageSize)
+	if (len(r11seq) > maxpatchLen) || (len(raxseq) > maxpatchLen) {
+		err = reProtectPages(from, pageSize)
+		if err != nil {
+			return nil, err
+		}
 		return nil, errors.New("code seq larger than expected")
 	}
 	jmpOrig := r11seq
-	if B == false {
+	if !B {
 		jmpOrig = raxseq
 	}
 	addr = to
@@ -369,12 +368,15 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 		0x41, 0xff, 0xe3, // JMP R11
 	}
 	jmpToTo := r11JmpTo
-	if B == false {
+	if !B {
 		jmpToTo = raxJmpTo
 	}
 	err = protectPages(toc, uintptr(inf.length+len(jmpOrig)))
 	if err != nil {
-		reProtectPages(from, pageSize)
+		err = reProtectPages(from, pageSize)
+		if err != nil {
+			return nil, err
+		}
 		if isDebug {
 			println("early-exit: ProtectPage  tgt failed.")
 		}
@@ -424,9 +426,15 @@ func applyWrapHookLong(from, to, toc uintptr) (*hook, error) {
 	dst = makeSlice(toc+uintptr(inf.length), uintptr(len(jmpOrig)))
 	copy(dst, jmpOrig)
 
-	reProtectPages(toc, pageSize)
-	reProtectPages(from, pageSize)
+	err = reProtectPages(toc, pageSize)
+	if err != nil {
+		return nil, err
+	}
 
+	err = reProtectPages(from, pageSize)
+	if err != nil {
+		return nil, err
+	}
 	if isDebug {
 		println("After-from:", hk.jumper)
 		for i := range hk.jumper {
@@ -567,11 +575,77 @@ func checkLiveAndStackUpdates(from uintptr, lenf int) (bool, bool, bool, int) {
 			println(" RSP unmodified: ", stkUnModified)
 		}
 	}
-	if (stkUnModified == false) && (countStkUpdate == 1) && (adj16 == true) {
+	if !stkUnModified && (countStkUpdate == 1) && adj16 {
 		if featureHandleNoStkChk {
 			println("----------found header with skip ", stkUpdInstr)
 			return okA, okB, stkUnModified, stkUpdInstr
 		}
 	}
 	return okA, okB, stkUnModified, -1
+}
+
+func ensureLength(src []byte, size int) (info, error) {
+	var inf info
+	inf.relocatable = true
+	for inf.length < size {
+		i, err := analysis(src)
+		if err != nil {
+			return inf, err
+		}
+		inf.relocatable = inf.relocatable && i.relocatable
+		inf.length += i.length
+		src = src[i.length:]
+	}
+	return inf, nil
+}
+
+func analysis(src []byte) (inf info, err error) {
+	inst, err := x86asm.Decode(src, 64)
+	if err != nil {
+		return
+	}
+	inf.length = inst.Len
+	inf.relocatable = true
+	for _, a := range inst.Args {
+		if mem, ok := a.(x86asm.Mem); ok {
+			if mem.Base == x86asm.RIP {
+				inf.relocatable = false
+				return
+			}
+		} else if _, ok := a.(x86asm.Rel); ok {
+			inf.relocatable = false
+			return
+		}
+	}
+	return
+}
+
+func reProtectPages(addr, size uintptr) error {
+	start := pageSize * (addr / pageSize)
+	length := pageSize * ((addr + size + pageSize - 1 - start) / pageSize)
+	for i := uintptr(0); i < length; i += pageSize {
+		data := makeSlice(start+i, pageSize)
+		err := unix.Mprotect(data, unix.PROT_EXEC|unix.PROT_READ)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func protectPages(addr, size uintptr) error {
+	start := pageSize * (addr / pageSize)
+	length := pageSize * ((addr + size + pageSize - 1 - start) / pageSize)
+	for i := uintptr(0); i < length; i += pageSize {
+		data := makeSlice(start+i, pageSize)
+		err := unix.Mprotect(data, unix.PROT_EXEC|unix.PROT_READ|unix.PROT_WRITE)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func init() {
+	pageSize = uintptr(unix.Getpagesize())
 }

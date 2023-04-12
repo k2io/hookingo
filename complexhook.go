@@ -6,8 +6,7 @@ import (
 	"unsafe"
 )
 
-func init() {
-}
+// ApplyWrapRaw is used to apply hooks on  instance function
 func ApplyWrapRaw(from uintptr, to, toc interface{}) (*hook, error) {
 
 	vt := reflect.ValueOf(to)
@@ -16,6 +15,7 @@ func ApplyWrapRaw(from uintptr, to, toc interface{}) (*hook, error) {
 	return applyWrap(from, vt.Pointer(), vc.Pointer(), nil)
 }
 
+// HookWrapInterface is used to apply hooks on  instance function
 func ApplyWrapInterface(from, to, toc interface{}) (*hook, error) {
 
 	vf := reflect.ValueOf(from)
@@ -27,6 +27,8 @@ func ApplyWrapInterface(from, to, toc interface{}) (*hook, error) {
 	e := (*eface)(unsafe.Pointer(&from))
 	return applyWrap(vf.Pointer(), vt.Pointer(), vc.Pointer(), e.typ)
 }
+
+// ApplyWrap is used to apply hooks on package public function
 func ApplyWrap(from, to, toc interface{}) (*hook, error) {
 
 	vf := reflect.ValueOf(from)
