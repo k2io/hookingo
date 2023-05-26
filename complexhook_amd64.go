@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Copyright (C) 2022 K2 Cyber Security Inc.
 /*
 Hooking in go-lang
