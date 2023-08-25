@@ -1,5 +1,5 @@
-github.com/golang/arch v0.0.0-20190927153633-4e8777c89be4 h1:MPm7H94GO7GK8xBHLK/pKpuDZcO6DxPd9WOa9zNMX78=
-github.com/golang/arch v0.0.0-20190927153633-4e8777c89be4/go.mod h1:flIaEI6LNU6xOCD5PaJvn9wGP0agmIOqjrtsKGRguv4=
-github.com/golang/sys v0.0.0-20191026070338-33540a1f6037 h1:Rp0Q8jDgLqfiM7P4gKhr+B+YJoMZb/5NcfaasR3CGe4=
-github.com/golang/sys v0.0.0-20191026070338-33540a1f6037/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+golang.org/x/arch v0.4.0 h1:A8WCeEWhLwPBKNbFi5Wv5UTCBx5zzubnXDlMOFAzFMc=
+golang.org/x/arch v0.4.0/go.mod h1:5om86z9Hs0C8fWVUuoMHwpExlXzs5Tkyp9hOrfG7pp8=
+golang.org/x/sys v0.11.0 h1:eG7RXZHdqOJ1i+0lgLgCpSXAp6M3LYlAo6osgSi0xOM=
+golang.org/x/sys v0.11.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 rsc.io/pdf v0.1.1/go.mod h1:n8OzWcQ6Sp37PL01nO98y4iUCRdTGarVfzxY20ICaU4=
